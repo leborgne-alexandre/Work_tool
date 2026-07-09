@@ -2,6 +2,98 @@ Il faut te connecter en QA5 en tant que client. Voici le compte que tu peux util
 
 
 
-Hi Ashwitha,
+// DIAG 404 portail SEL QA ‚Äî page org_del_mon_organisation (u_bp_id=743622)
+// √Ä ex√©cuter dans Scripts - Background (scope global) sur l'instance QA.
+// Dump : (1) toutes les pages org_del_* / ind_del_* avec roles/public/draft,
+//        (2) les widgets de la page cible, (3) tout code widget contenant
+//        une logique 404/redirect/contr√¥le d'acc√®s DRP, avec extraits.
 
-Tomorrow at 8:00 AM Eastern works for me (2:00 PM in France, where I'm based). Feel free to send the invite.
+(function() {
+    var PAGE_ID = 'org_del_mon_organisation';
+    var NEEDLES = ['404', 'redirect', 'CCQSELDRPAccess', '$location', 'window.location'];
+
+    gs.info('===== [1] Pages org_del_* / ind_del_* =====');
+    var pages = new GlideRecord('sp_page');
+    pages.addEncodedQuery('idSTARTSWITHorg_del^ORidSTARTSWITHind_del');
+    pages.orderBy('id');
+    pages.query();
+    while (pages.next()) {
+        gs.info('PAGE id=' + pages.getValue('id') +
+            ' | sys_id=' + pages.getUniqueValue() +
+            ' | title=' + pages.getValue('title') +
+            ' | roles=' + (pages.getValue('roles') || '(aucun)') +
+            ' | public=' + pages.getValue('public') +
+            ' | draft=' + pages.getValue('draft') +
+            ' | internal=' + pages.getValue('internal'));
+    }
+
+    gs.info('===== [2] Widgets de la page ' + PAGE_ID + ' =====');
+    var page = new GlideRecord('sp_page');
+    page.addQuery('id', PAGE_ID);
+    page.query();
+    if (!page.next()) {
+        gs.info('!! PAGE INTROUVABLE : ' + PAGE_ID);
+        return;
+    }
+
+    var widgetIds = {};
+    var cont = new GlideRecord('sp_container');
+    cont.addQuery('sp_page', page.getUniqueValue());
+    cont.orderBy('order');
+    cont.query();
+    while (cont.next()) {
+        var row = new GlideRecord('sp_row');
+        row.addQuery('sp_container', cont.getUniqueValue());
+        row.orderBy('order');
+        row.query();
+        while (row.next()) {
+            var col = new GlideRecord('sp_column');
+            col.addQuery('sp_row', row.getUniqueValue());
+            col.orderBy('order');
+            col.query();
+            while (col.next()) {
+                var inst = new GlideRecord('sp_instance');
+                inst.addQuery('sp_column', col.getUniqueValue());
+                inst.orderBy('order');
+                inst.query();
+                while (inst.next()) {
+                    var wSysId = inst.getValue('sp_widget');
+                    widgetIds[wSysId] = true;
+                    gs.info('INSTANCE sys_id=' + inst.getUniqueValue() +
+                        ' | widget=' + inst.getDisplayValue('sp_widget') +
+                        ' | widget_sys_id=' + wSysId +
+                        ' | instance_roles=' + (inst.isValidField('roles') ? (inst.getValue('roles') || '(aucun)') : 'n/a') +
+                        ' | instance_title=' + (inst.getValue('title') || ''));
+                }
+            }
+        }
+    }
+
+    gs.info('===== [3] Analyse code des widgets (recherche 404/redirect/DRP) =====');
+    for (var wid in widgetIds) {
+        var w = new GlideRecord('sp_widget');
+        if (!w.get(wid))
+            continue;
+        gs.info('WIDGET ' + w.getValue('name') + ' (id=' + w.getValue('id') + ') | sys_id=' + wid);
+        var parts = {
+            server: w.getValue('script') || '',
+            client: w.getValue('client_script') || '',
+            template: w.getValue('template') || '',
+            link: w.getValue('link') || ''
+        };
+        for (var p in parts) {
+            var src = parts[p];
+            for (var n = 0; n < NEEDLES.length; n++) {
+                var idx = src.indexOf(NEEDLES[n]);
+                while (idx !== -1) {
+                    var start = Math.max(0, idx - 120);
+                    var end = Math.min(src.length, idx + 160);
+                    gs.info('  >> MATCH "' + NEEDLES[n] + '" dans ' + p + ' @' + idx + ' :\n     ...' +
+                        src.substring(start, end).replace(/\n/g, ' \\n ') + '...');
+                    idx = src.indexOf(NEEDLES[n], idx + 1);
+                }
+            }
+        }
+    }
+    gs.info('===== FIN DIAG =====');
+})();
