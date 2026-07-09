@@ -2,98 +2,75 @@ Il faut te connecter en QA5 en tant que client. Voici le compte que tu peux util
 
 
 
-// DIAG 404 portail SEL QA ‚Äî page org_del_mon_organisation (u_bp_id=743622)
+// DIAG 404 SEL QA ‚Äî √©tape 2 : comprendre hasAccess du widget
+// "CCQ Data Table from URL Definition" (d729e4231b50f1907f28ddf2cc4bcbd6)
+// et v√©rifier l'int√©grit√© des u_ccq_product_models r√©f√©renc√©s par les pages *del*.
 // √Ä ex√©cuter dans Scripts - Background (scope global) sur l'instance QA.
-// Dump : (1) toutes les pages org_del_* / ind_del_* avec roles/public/draft,
-//        (2) les widgets de la page cible, (3) tout code widget contenant
-//        une logique 404/redirect/contr√¥le d'acc√®s DRP, avec extraits.
 
 (function() {
-    var PAGE_ID = 'org_del_mon_organisation';
-    var NEEDLES = ['404', 'redirect', 'CCQSELDRPAccess', '$location', 'window.location'];
+    var WIDGET_SYS_ID = 'd729e4231b50f1907f28ddf2cc4bcbd6';
+    var NEEDLES = ['hasAccess', 'accessDenied', 'CCQSELDRPAccess', 'u_ccq_product_models', 'getUserType', 'u_bp_id'];
+    var CTX = 500;
 
-    gs.info('===== [1] Pages org_del_* / ind_del_* =====');
+    gs.info('===== [1] u_ccq_product_models ‚Äî table r√©f√©renc√©e =====');
+    var refTable = '';
+    var dict = new GlideRecord('sys_dictionary');
+    dict.addQuery('name', 'sp_page');
+    dict.addQuery('element', 'u_ccq_product_models');
+    dict.query();
+    if (dict.next()) {
+        refTable = dict.getValue('reference') || '';
+        gs.info('sp_page.u_ccq_product_models : type=' + dict.getValue('internal_type') + ' | reference=' + refTable);
+    } else {
+        gs.info('!! champ u_ccq_product_models introuvable dans sys_dictionary');
+    }
+
+    gs.info('===== [2] Product models des pages org_del_* / ind_del_* ‚Äî existence sur cette instance =====');
     var pages = new GlideRecord('sp_page');
     pages.addEncodedQuery('idSTARTSWITHorg_del^ORidSTARTSWITHind_del');
     pages.orderBy('id');
     pages.query();
     while (pages.next()) {
-        gs.info('PAGE id=' + pages.getValue('id') +
-            ' | sys_id=' + pages.getUniqueValue() +
-            ' | title=' + pages.getValue('title') +
-            ' | roles=' + (pages.getValue('roles') || '(aucun)') +
-            ' | public=' + pages.getValue('public') +
-            ' | draft=' + pages.getValue('draft') +
-            ' | internal=' + pages.getValue('internal'));
+        var models = (pages.getValue('u_ccq_product_models') || '').split(',');
+        var resume = [];
+        for (var i = 0; i < models.length; i++) {
+            var m = models[i].trim();
+            if (!m)
+                continue;
+            if (refTable) {
+                var pm = new GlideRecord(refTable);
+                if (pm.get(m))
+                    resume.push(m + ' = "' + pm.getDisplayValue() + '" OK');
+                else
+                    resume.push(m + ' = !! INTROUVABLE !!');
+            } else {
+                resume.push(m + ' = (table ref inconnue)');
+            }
+        }
+        gs.info('PAGE ' + pages.getValue('id') + ' | models: ' + (resume.length ? resume.join(' ; ') : '(aucun)'));
     }
 
-    gs.info('===== [2] Widgets de la page ' + PAGE_ID + ' =====');
-    var page = new GlideRecord('sp_page');
-    page.addQuery('id', PAGE_ID);
-    page.query();
-    if (!page.next()) {
-        gs.info('!! PAGE INTROUVABLE : ' + PAGE_ID);
+    gs.info('===== [3] Server script du widget ‚Äî extraits autour des points cl√©s =====');
+    var w = new GlideRecord('sp_widget');
+    if (!w.get(WIDGET_SYS_ID)) {
+        gs.info('!! widget introuvable : ' + WIDGET_SYS_ID);
         return;
     }
-
-    var widgetIds = {};
-    var cont = new GlideRecord('sp_container');
-    cont.addQuery('sp_page', page.getUniqueValue());
-    cont.orderBy('order');
-    cont.query();
-    while (cont.next()) {
-        var row = new GlideRecord('sp_row');
-        row.addQuery('sp_container', cont.getUniqueValue());
-        row.orderBy('order');
-        row.query();
-        while (row.next()) {
-            var col = new GlideRecord('sp_column');
-            col.addQuery('sp_row', row.getUniqueValue());
-            col.orderBy('order');
-            col.query();
-            while (col.next()) {
-                var inst = new GlideRecord('sp_instance');
-                inst.addQuery('sp_column', col.getUniqueValue());
-                inst.orderBy('order');
-                inst.query();
-                while (inst.next()) {
-                    var wSysId = inst.getValue('sp_widget');
-                    widgetIds[wSysId] = true;
-                    gs.info('INSTANCE sys_id=' + inst.getUniqueValue() +
-                        ' | widget=' + inst.getDisplayValue('sp_widget') +
-                        ' | widget_sys_id=' + wSysId +
-                        ' | instance_roles=' + (inst.isValidField('roles') ? (inst.getValue('roles') || '(aucun)') : 'n/a') +
-                        ' | instance_title=' + (inst.getValue('title') || ''));
-                }
+    var src = w.getValue('script') || '';
+    gs.info('WIDGET ' + w.getValue('name') + ' | server script length=' + src.length);
+    var printed = {};
+    for (var n = 0; n < NEEDLES.length; n++) {
+        var idx = src.indexOf(NEEDLES[n]);
+        while (idx !== -1) {
+            var start = Math.max(0, idx - CTX);
+            var end = Math.min(src.length, idx + CTX);
+            var key = start + '-' + end;
+            if (!printed[key]) {
+                printed[key] = true;
+                gs.info('--- MATCH "' + NEEDLES[n] + '" @' + idx + ' ---\n' + src.substring(start, end));
             }
+            idx = src.indexOf(NEEDLES[n], idx + NEEDLES[n].length);
         }
     }
-
-    gs.info('===== [3] Analyse code des widgets (recherche 404/redirect/DRP) =====');
-    for (var wid in widgetIds) {
-        var w = new GlideRecord('sp_widget');
-        if (!w.get(wid))
-            continue;
-        gs.info('WIDGET ' + w.getValue('name') + ' (id=' + w.getValue('id') + ') | sys_id=' + wid);
-        var parts = {
-            server: w.getValue('script') || '',
-            client: w.getValue('client_script') || '',
-            template: w.getValue('template') || '',
-            link: w.getValue('link') || ''
-        };
-        for (var p in parts) {
-            var src = parts[p];
-            for (var n = 0; n < NEEDLES.length; n++) {
-                var idx = src.indexOf(NEEDLES[n]);
-                while (idx !== -1) {
-                    var start = Math.max(0, idx - 120);
-                    var end = Math.min(src.length, idx + 160);
-                    gs.info('  >> MATCH "' + NEEDLES[n] + '" dans ' + p + ' @' + idx + ' :\n     ...' +
-                        src.substring(start, end).replace(/\n/g, ' \\n ') + '...');
-                    idx = src.indexOf(NEEDLES[n], idx + 1);
-                }
-            }
-        }
-    }
-    gs.info('===== FIN DIAG =====');
+    gs.info('===== FIN DIAG 2 =====');
 })();
