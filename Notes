@@ -1,1 +1,1 @@
-api/now/sp/page?id=org_del_mon_organisation&u_bp_id=743622
+gs.info('[DIAG404] u_bp_id=' + $sp.getParameter('u_bp_id') + ' | id=' + $sp.getParameter('id') + ' | user=' + gs.getUserName());
