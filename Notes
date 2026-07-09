@@ -1,72 +1,74 @@
-// DIAG 404 SEL QA ‚Äî √©tape 2 : comprendre hasAccess du widget
-// "CCQ Data Table from URL Definition" (d729e4231b50f1907f28ddf2cc4bcbd6)
-// et v√©rifier l'int√©grit√© des u_ccq_product_models r√©f√©renc√©s par les pages *del*.
+// DIAG 404 SEL QA ‚Äî √©tape 3 : pourquoi hasAnyPMAccess renvoie false
+// 1) dump la fonction hasAnyPMAccess du widget, 2) dump le u_portal_access
+// d'un user affect√©, 3) rejoue la comparaison PM par PM avec verdict.
 // √Ä ex√©cuter dans Scripts - Background (scope global) sur l'instance QA.
 
 (function() {
+    var USER_SYS_ID = '6cee8a6c934332909e40f82ddd03d659'; // user affect√© par la 404
+    var BP_ID = '743622';                           // BP de l'URL test√©e
+    var PAGE_ID = 'org_del_mon_organisation';       // page cass√©e de r√©f√©rence
     var WIDGET_SYS_ID = 'd729e4231b50f1907f28ddf2cc4bcbd6';
-    var NEEDLES = ['hasAccess', 'accessDenied', 'CCQSELDRPAccess', 'u_ccq_product_models', 'getUserType', 'u_bp_id'];
-    var CTX = 500;
 
-    gs.info('===== [1] u_ccq_product_models ‚Äî table r√©f√©renc√©e =====');
-    var refTable = '';
-    var dict = new GlideRecord('sys_dictionary');
-    dict.addQuery('name', 'sp_page');
-    dict.addQuery('element', 'u_ccq_product_models');
-    dict.query();
-    if (dict.next()) {
-        refTable = dict.getValue('reference') || '';
-        gs.info('sp_page.u_ccq_product_models : type=' + dict.getValue('internal_type') + ' | reference=' + refTable);
-    } else {
-        gs.info('!! champ u_ccq_product_models introuvable dans sys_dictionary');
-    }
-
-    gs.info('===== [2] Product models des pages org_del_* / ind_del_* ‚Äî existence sur cette instance =====');
-    var pages = new GlideRecord('sp_page');
-    pages.addEncodedQuery('idSTARTSWITHorg_del^ORidSTARTSWITHind_del');
-    pages.orderBy('id');
-    pages.query();
-    while (pages.next()) {
-        var models = (pages.getValue('u_ccq_product_models') || '').split(',');
-        var resume = [];
-        for (var i = 0; i < models.length; i++) {
-            var m = models[i].trim();
-            if (!m)
-                continue;
-            if (refTable) {
-                var pm = new GlideRecord(refTable);
-                if (pm.get(m))
-                    resume.push(m + ' = "' + pm.getDisplayValue() + '" OK');
-                else
-                    resume.push(m + ' = !! INTROUVABLE !!');
-            } else {
-                resume.push(m + ' = (table ref inconnue)');
-            }
-        }
-        gs.info('PAGE ' + pages.getValue('id') + ' | models: ' + (resume.length ? resume.join(' ; ') : '(aucun)'));
-    }
-
-    gs.info('===== [3] Server script du widget ‚Äî extraits autour des points cl√©s =====');
+    gs.info('===== [1] Source de hasAnyPMAccess =====');
     var w = new GlideRecord('sp_widget');
-    if (!w.get(WIDGET_SYS_ID)) {
-        gs.info('!! widget introuvable : ' + WIDGET_SYS_ID);
+    if (w.get(WIDGET_SYS_ID)) {
+        var src = w.getValue('script') || '';
+        var idx = src.indexOf('function hasAnyPMAccess');
+        if (idx !== -1)
+            gs.info(src.substring(idx, Math.min(src.length, idx + 2000)));
+        else
+            gs.info('!! "function hasAnyPMAccess" absent du server script du widget ‚Äî probablement d√©fini ailleurs (Script Include ?). Grep global : ' +
+                'cherche hasAnyPMAccess dans sys_script_include.');
+    }
+
+    gs.info('===== [2] PMs requis par la page ' + PAGE_ID + ' =====');
+    var page = new GlideRecord('sp_page');
+    page.addQuery('id', PAGE_ID);
+    page.query();
+    var pmRequired = '';
+    if (page.next()) {
+        pmRequired = page.getValue('u_ccq_product_models') || '';
+        var ids = pmRequired.split(',');
+        for (var i = 0; i < ids.length; i++) {
+            var pm = new GlideRecord('x_mdlcd_ccq_case_product_model');
+            gs.info('  requis: ' + ids[i] + (pm.get(ids[i]) ? ' = "' + pm.getDisplayValue() + '"' : ' = !! INTROUVABLE !!'));
+        }
+    }
+
+    gs.info('===== [3] u_portal_access du user ' + USER_SYS_ID + ' =====');
+    var u = new GlideRecord('sys_user');
+    if (!u.get(USER_SYS_ID)) {
+        gs.info('!! user introuvable : ' + USER_SYS_ID);
         return;
     }
-    var src = w.getValue('script') || '';
-    gs.info('WIDGET ' + w.getValue('name') + ' | server script length=' + src.length);
-    var printed = {};
-    for (var n = 0; n < NEEDLES.length; n++) {
-        var idx = src.indexOf(NEEDLES[n]);
-        while (idx !== -1) {
-            var start = Math.max(0, idx - CTX);
-            var end = Math.min(src.length, idx + CTX);
-            var key = start + '-' + end;
-            if (!printed[key]) {
-                printed[key] = true;
-                gs.info('--- MATCH "' + NEEDLES[n] + '" @' + idx + ' ---\n' + src.substring(start, end));
-            }
-            idx = src.indexOf(NEEDLES[n], idx + NEEDLES[n].length);
-        }
+    gs.info('user ' + u.getValue('user_name') + ' | sys_id=' + u.getUniqueValue() + ' | active=' + u.getValue('active'));
+    var raw = u.getValue('u_portal_access');
+    gs.info('u_portal_access RAW (' + (raw ? raw.length : 0) + ' chars) :\n' + (raw || '(VIDE ‚Äî cause probable de la 404 : aucune d√©l√©gation port√©e par le user sur QA)'));
+
+    if (!raw)
+        return;
+
+    var parsed;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (e) {
+        gs.info('!! JSON INVALIDE : ' + e.message + ' ‚Äî hasAnyPMAccess re√ßoit un objet inattendu');
+        return;
     }
-    gs.info('===== FIN DIAG 2 =====');
+
+    gs.info('===== [4] Analyse : entr√©es du JSON vs BP ' + BP_ID + ' et PMs requis =====');
+    var pmReqArr = pmRequired ? pmRequired.split(',') : [];
+    gs.info('JSON type=' + (Array.isArray(parsed) ? 'array(' + parsed.length + ')' : typeof parsed) + ' | cl√©s/entr√©es :');
+    var entries = Array.isArray(parsed) ? parsed : Object.keys(parsed).map(function(k) { return { _key: k, _val: parsed[k] }; });
+    for (var j = 0; j < entries.length; j++) {
+        var line = JSON.stringify(entries[j]);
+        var flagBp = line.indexOf(BP_ID) !== -1 ? '  << contient le BP ' + BP_ID : '';
+        var flagPm = '';
+        for (var k = 0; k < pmReqArr.length; k++) {
+            if (pmReqArr[k] && line.indexOf(pmReqArr[k]) !== -1)
+                flagPm += '  << contient PM requis ' + pmReqArr[k];
+        }
+        gs.info('  [' + j + '] ' + line.substring(0, 600) + flagBp + flagPm);
+    }
+    gs.info('===== FIN DIAG 3 =====');
 })();
