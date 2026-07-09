@@ -1,1 +1,1 @@
-gs.info('[DIAG404-5] bp=' + bp_id + ' | typeof=' + typeof bp_id + ' | loose743622=' + (bp_id == '743622'));
+var bp_id = '' + ($sp.getParameter('u_bp_id') || $sp.getParameter('bp_id') || '');
