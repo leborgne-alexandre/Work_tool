@@ -1,74 +1,99 @@
-// DIAG 404 SEL QA ‚Äî √©tape 3 : pourquoi hasAnyPMAccess renvoie false
-// 1) dump la fonction hasAnyPMAccess du widget, 2) dump le u_portal_access
-// d'un user affect√©, 3) rejoue la comparaison PM par PM avec verdict.
-// √Ä ex√©cuter dans Scripts - Background (scope global) sur l'instance QA.
+// DIAG 404 SEL QA ‚Äî √©tape 4 : rejouer hasAnyPMAccess pas √† pas
+// Trace exactement ce que la fonction du widget voit et pourquoi elle
+// renvoie true/false, + d√©tecte doublons de page et BP rang√© en primary.
+// √Ä ex√©cuter dans Scripts - Background (scope global) sur QA5.
 
 (function() {
-    var USER_SYS_ID = '6cee8a6c934332909e40f82ddd03d659'; // user affect√© par la 404
-    var BP_ID = '743622';                           // BP de l'URL test√©e
-    var PAGE_ID = 'org_del_mon_organisation';       // page cass√©e de r√©f√©rence
-    var WIDGET_SYS_ID = 'd729e4231b50f1907f28ddf2cc4bcbd6';
+    var USER_IDENTIFIER = '6cee8a6c934332909e40f82ddd03d659'; // sys_id, user_name ou email du user test√©
+    var BP_ID = '743622';                                     // u_bp_id de l'URL qui donne la 404
+    var PAGE_ID = 'org_del_mon_organisation';
 
-    gs.info('===== [1] Source de hasAnyPMAccess =====');
-    var w = new GlideRecord('sp_widget');
-    if (w.get(WIDGET_SYS_ID)) {
-        var src = w.getValue('script') || '';
-        var idx = src.indexOf('function hasAnyPMAccess');
-        if (idx !== -1)
-            gs.info(src.substring(idx, Math.min(src.length, idx + 2000)));
-        else
-            gs.info('!! "function hasAnyPMAccess" absent du server script du widget ‚Äî probablement d√©fini ailleurs (Script Include ?). Grep global : ' +
-                'cherche hasAnyPMAccess dans sys_script_include.');
+    // --- [1] Doublons de page ?
+    gs.info('===== [1] Records sp_page avec id=' + PAGE_ID + ' =====');
+    var pcount = 0;
+    var firstPagePMs = null;
+    var p = new GlideRecord('sp_page');
+    p.addEncodedQuery('id=' + PAGE_ID); // m√™me query que le widget
+    p.query();
+    while (p.next()) {
+        pcount++;
+        var pms = p.getValue('u_ccq_product_models') || '(VIDE)';
+        if (firstPagePMs === null)
+            firstPagePMs = p.getValue('u_ccq_product_models') || '';
+        gs.info('  #' + pcount + ' sys_id=' + p.getUniqueValue() + ' | scope=' + p.getValue('sys_scope') + ' | PMs=' + pms);
     }
+    if (pcount === 0) { gs.info('!! page introuvable sur CETTE instance'); return; }
+    if (pcount > 1)
+        gs.info('‚ö†Ô∏è DOUBLON D√âTECT√â : le widget fait setLimit(1) ‚Üí il peut tomber sur le record sans PM ‚Üí 404 pour tous');
 
-    gs.info('===== [2] PMs requis par la page ' + PAGE_ID + ' =====');
-    var page = new GlideRecord('sp_page');
-    page.addQuery('id', PAGE_ID);
-    page.query();
-    var pmRequired = '';
-    if (page.next()) {
-        pmRequired = page.getValue('u_ccq_product_models') || '';
-        var ids = pmRequired.split(',');
-        for (var i = 0; i < ids.length; i++) {
-            var pm = new GlideRecord('x_mdlcd_ccq_case_product_model');
-            gs.info('  requis: ' + ids[i] + (pm.get(ids[i]) ? ' = "' + pm.getDisplayValue() + '"' : ' = !! INTROUVABLE !!'));
-        }
-    }
-
-    gs.info('===== [3] u_portal_access du user ' + USER_SYS_ID + ' =====');
+    // --- [2] User + JSON
+    gs.info('===== [2] User =====');
     var u = new GlideRecord('sys_user');
-    if (!u.get(USER_SYS_ID)) {
-        gs.info('!! user introuvable : ' + USER_SYS_ID);
-        return;
-    }
-    gs.info('user ' + u.getValue('user_name') + ' | sys_id=' + u.getUniqueValue() + ' | active=' + u.getValue('active'));
+    u.addQuery('sys_id', USER_IDENTIFIER)
+        .addOrCondition('user_name', USER_IDENTIFIER)
+        .addOrCondition('email', USER_IDENTIFIER);
+    u.query();
+    if (!u.next()) { gs.info('!! user introuvable : ' + USER_IDENTIFIER); return; }
+    gs.info('user=' + u.getValue('user_name') + ' | sys_id=' + u.getUniqueValue());
     var raw = u.getValue('u_portal_access');
-    gs.info('u_portal_access RAW (' + (raw ? raw.length : 0) + ' chars) :\n' + (raw || '(VIDE ‚Äî cause probable de la 404 : aucune d√©l√©gation port√©e par le user sur QA)'));
-
-    if (!raw)
-        return;
-
+    if (!raw) { gs.info('u_portal_access VIDE ‚Üí hasAnyPMAccess plante/false ‚Üí 404. Cause trouv√©e.'); return; }
     var parsed;
-    try {
-        parsed = JSON.parse(raw);
-    } catch (e) {
-        gs.info('!! JSON INVALIDE : ' + e.message + ' ‚Äî hasAnyPMAccess re√ßoit un objet inattendu');
+    try { parsed = JSON.parse(raw); } catch (e) { gs.info('!! JSON invalide : ' + e.message); return; }
+
+    // --- [3] Replay exact de hasAnyPMAccess, avec trace
+    gs.info('===== [3] Replay hasAnyPMAccess(user, ' + BP_ID + ', PMs page) =====');
+    var pmValues = firstPagePMs; // ce que le widget lit sur le 1er record trouv√©
+    gs.info('pmValues lu par le widget = "' + pmValues + '"');
+    if (!pmValues) {
+        gs.info('‚ö†Ô∏è pmValues vide/null ‚Üí .split l√®verait une exception ou ne matcherait rien ‚Üí hasAccess false/undefined');
         return;
     }
-
-    gs.info('===== [4] Analyse : entr√©es du JSON vs BP ' + BP_ID + ' et PMs requis =====');
-    var pmReqArr = pmRequired ? pmRequired.split(',') : [];
-    gs.info('JSON type=' + (Array.isArray(parsed) ? 'array(' + parsed.length + ')' : typeof parsed) + ' | cl√©s/entr√©es :');
-    var entries = Array.isArray(parsed) ? parsed : Object.keys(parsed).map(function(k) { return { _key: k, _val: parsed[k] }; });
-    for (var j = 0; j < entries.length; j++) {
-        var line = JSON.stringify(entries[j]);
-        var flagBp = line.indexOf(BP_ID) !== -1 ? '  << contient le BP ' + BP_ID : '';
-        var flagPm = '';
-        for (var k = 0; k < pmReqArr.length; k++) {
-            if (pmReqArr[k] && line.indexOf(pmReqArr[k]) !== -1)
-                flagPm += '  << contient PM requis ' + pmReqArr[k];
+    var pmList = pmValues.split(',');
+    var result = false;
+    var visited = 0;
+    for (var key in parsed.secondary) {
+        var entry = parsed.secondary[key];
+        visited++;
+        var bpMatch = (entry.bpId == BP_ID);
+        gs.info('  secondary[' + key + '] bpId=' + entry.bpId + (bpMatch ? '  << MATCH BP' : ''));
+        if (!bpMatch) continue;
+        var roles = entry.roles || [];
+        for (var i = 0; i < roles.length; i++) {
+            var caps = roles[i].pmCapabilities || [];
+            for (var j = 0; j < caps.length; j++) {
+                var cur = caps[j].PM;
+                for (var k = 0; k < pmList.length; k++) {
+                    var exact = (cur == pmList[k]);
+                    var ci = (String(cur).toLowerCase() == String(pmList[k]).toLowerCase());
+                    if (exact) {
+                        gs.info('    PM ' + cur + ' == requis ' + pmList[k] + '  ‚Üí TRUE (acc√®s accord√©)');
+                        result = true;
+                    } else if (ci) {
+                        gs.info('    ‚ö†Ô∏è PM ' + cur + ' matche ' + pmList[k] + ' UNIQUEMENT sans tenir compte de la casse ‚Üí bug de casse confirm√©');
+                    }
+                }
+            }
         }
-        gs.info('  [' + j + '] ' + line.substring(0, 600) + flagBp + flagPm);
     }
-    gs.info('===== FIN DIAG 3 =====');
+    gs.info('  (entr√©es secondary visit√©es : ' + visited + ')');
+    gs.info('R√âSULTAT hasAnyPMAccess = ' + result + (result ? ' ‚Üí PAS de 404 attendue pour ce user/BP' : ' ‚Üí 404 pour ce user/BP'));
+
+    // --- [4] Le BP est-il rang√© en primary ? (angle mort de la fonction)
+    gs.info('===== [4] V√©rif angle mort primary =====');
+    if (parsed.primary && parsed.primary.bpId == BP_ID) {
+        gs.info('‚ö†Ô∏è BP ' + BP_ID + ' est le PRIMARY de ce user ‚Äî hasAnyPMAccess ne lit QUE secondary ‚Üí 404 garantie sur sa propre organisation. BUG CONFIRM√â.');
+        var proles = parsed.primary.roles || [];
+        for (var a = 0; a < proles.length; a++) {
+            var pcaps = proles[a].pmCapabilities || [];
+            for (var b = 0; b < pcaps.length; b++) {
+                for (var c2 = 0; c2 < pmList.length; c2++) {
+                    if (pcaps[b].PM == pmList[c2])
+                        gs.info('    (primary contient pourtant le PM requis ' + pmList[c2] + ')');
+                }
+            }
+        }
+    } else {
+        gs.info('BP ' + BP_ID + ' n\'est pas le primary de ce user (primary=' + (parsed.primary ? parsed.primary.bpId : 'absent') + ')');
+    }
+    gs.info('===== FIN DIAG 4 =====');
 })();
