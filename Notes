@@ -3,3 +3,9 @@ var bp_id = '' + ($sp.getParameter('u_bp_id') || $sp.getParameter('bp_id') || ''
 
 
 qa5_23@team130670.testinator.com / CCQ1234$
+
+
+
+Cause : sur les pages déléguées du portail SEL, le widget CCQ Data Table from URL Definition lisait le paramètre d'URL bp_id alors que les liens transmettent u_bp_id — le contrôle d'accès délégué recevait un BP vide et redirigeait systématiquement les non-admins vers sel_404, indépendamment de leurs droits.
+Correctif : lecture du bon paramètre avec repli sur l'ancien nom — var bp_id = '' + ($sp.getParameter('u_bp_id') || $sp.getParameter('bp_id') || '');
+Validation : confirmé en QA5 par impersonation d'un utilisateur affecté ; à capturer en update set et à comparer avec la révision du widget en prod.
