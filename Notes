@@ -1,36 +1,5 @@
-## Le record à modifier
+ccqpreprod.service-now.com/now/workflow-studio/builder%3Ftable%3Dsys_flow_context%26sysId%3D798d84194cd50b5014d7c1a85cc5dd02
 
-**Un seul.**
 
-| Champ | Valeur |
-|---|---|
-| Table | `sys_script_include` |
-| Nom | `CCQAjax` |
-| **sys_id** | **`359adf1e1bdc91507f28ddf2cc4bcb43`** |
-| API name | `x_mdlcd_ccq_case.CCQAjax` |
-| Scope | CCQ Case (`x_mdlcd_ccq_case`) |
-| Instance | `ccqdev` |
 
-URL directe : `https://ccqdev.service-now.com/nav_to.do?uri=sys_script_include.do?sys_id=359adf1e1bdc91507f28ddf2cc4bcb43`
-
-Les deux fonctions à patcher (`getRequesterFromRemoteRelation` et `getConsumerInfoFromRemoteRelation`) vivent toutes les deux dans ce Script Include. Les client scripts ne sont **pas** touchés, ils sont juste victimes du bug.
-
-## Instructions
-
-Passe l'application courante en **CCQ Case** (`x_mdlcd_ccq_case`) avant d'ouvrir le record, sinon ServiceNow te proposera de créer une customisation cross-scope au lieu d'éditer directement.
-
-Crée un Update Set avant de sauvegarder. Nommage transverse ALB : `ALB - <STORY> - Fix undefined field messages CCQAjax`, avec le numéro de la story ou du bug qui remonte le problème. Passe-le en Current.
-
-Ouvre le Script Include, cherche `getRequesterFromRemoteRelation:` (autour de la ligne où il y a `var bp_id_of_contact;`), ajoute le bloc des 5 initialisations juste après `var obj = {};`. Fais pareil dans `getConsumerInfoFromRemoteRelation:`, repérable par `var bpid1, bpid2;`.
-
-Sauvegarde, puis vérifie que le `sys_update_xml` est bien tombé dans ton Update Set (`sys_script_include_359adf1e1bdc91507f28ddf2cc4bcb43`).
-
-## Test de non-régression
-
-Rouvre le RP `5b3fba401b6946107f28ddf2cc4bcbc0` en Service Portal, sélectionne le même contact qu'avant. Les champs `Type du numéro de téléphone principal` et `Numéro de téléphone principal` doivent afficher **"Aucune information au dossier."** au lieu de "Valeur actuelle: undefined".
-
-Vérifie ensuite le cas inverse, un contact qui **a** une relation BP renseignée : le message doit toujours dire "Valeur actuelle: <le numéro>". C'est le contrôle qui prouve que tu n'as pas cassé le chemin nominal.
-
-Attention : `CCQAjax` a été modifié aujourd'hui à 13:09 par P13711. Rafraîchis le record avant d'éditer, ne travaille pas sur un onglet ouvert depuis ce matin.
-
-Je documente ce finding dans la page de l'item CCQ ? La page [modifier-infos-personnelles-coordonnees.md](wiki/servicenow/catalog/overlays/ccq/items/modifier-infos-personnelles-coordonnees.md) existe déjà, et le pattern "clé absente d'un objet GlideAjax + garde `!= ''` côté client" est typiquement le genre de chose qu'on veut retrouver dans six mois.
+ccqqa2.service-now.com/now/workflow-studio/builder%3Ftable%3Dsys_flow_context%26sysId%3D915e9929c3d107100946779ed1ccfdf8
