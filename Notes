@@ -1,11 +1,342 @@
-var bp_id = '' + ($sp.getParameter('u_bp_id') || $sp.getParameter('bp_id') || '');
+/**
+ * CCQ ‚Äî Diagnostic "Valeur actuelle: undefined" sur le bloc telephone principal
+ * RP: 5b3fba401b6946107f28ddf2cc4bcbc0 (Modifier les infos personnelles et les coordonnees)
+ *
+ * READ-ONLY. Background Script (Global scope). ES3/Rhino safe.
+ *
+ * Goal: find WHO writes the "Valeur actuelle: ..." field message, and whether the
+ * undefined value is expected (empty variable) or a plumbing bug (bad property name
+ * on a GlideAjax answer object).
+ *
+ * Wide-net v1: item context + phone vars + client scripts (full source) + UI policies
+ * + GlideAjax script includes (full source) + instance-wide scan for the needle string.
+ */
+(function () {
 
+    var ITEM_SYS_ID = '5b3fba401b6946107f28ddf2cc4bcbc0';
 
+    // Needles: the visible message + the API that renders it
+    var NEEDLES = ['Valeur actuelle', 'showFieldMsg'];
 
-qa5_23@team130670.testinator.com / CCQ1234$
+    // The 4 variables visible in the screenshot (variable set communication_main_phone_gl)
+    var TARGET_VARS = [
+        'type_numero_tel_principal',
+        'territoire_telephonique_principal',
+        'indicatif_principal',
+        'numero_de_telephone_principal'
+    ];
 
+    var MAX_LINE = 3000;
 
+    function out(msg) {
+        gs.info(msg);
+    }
 
-Cause : sur les pages déléguées du portail SEL, le widget CCQ Data Table from URL Definition lisait le paramètre d'URL bp_id alors que les liens transmettent u_bp_id — le contrôle d'accès délégué recevait un BP vide et redirigeait systématiquement les non-admins vers sel_404, indépendamment de leurs droits.
-Correctif : lecture du bon paramètre avec repli sur l'ancien nom — var bp_id = '' + ($sp.getParameter('u_bp_id') || $sp.getParameter('bp_id') || '');
-Validation : confirmé en QA5 par impersonation d'un utilisateur affecté ; à capturer en update set et à comparer avec la révision du widget en prod.
+    function hr(title) {
+        out('');
+        out('==================================================================');
+        out('== ' + title);
+        out('==================================================================');
+    }
+
+    function dumpScript(code) {
+        if (!code) {
+            out('    (empty script)');
+            return;
+        }
+        var lines = String(code).split('\n');
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line.length <= MAX_LINE) {
+                out('    | ' + line);
+            } else {
+                for (var c = 0; c < line.length; c += MAX_LINE) {
+                    out('    | ' + line.substring(c, c + MAX_LINE));
+                }
+            }
+        }
+    }
+
+    function containsAny(code, needles) {
+        if (!code) return false;
+        var s = String(code);
+        for (var i = 0; i < needles.length; i++) {
+            if (s.indexOf(needles[i]) !== -1) return true;
+        }
+        return false;
+    }
+
+    // ---------------------------------------------------------------- STEP 0
+    hr('STEP 0 - Execution context');
+    out('instance_name : ' + gs.getProperty('instance_name'));
+    out('glide.buildtag : ' + gs.getProperty('glide.buildtag'));
+    out('user          : ' + gs.getUserName());
+    out('run at        : ' + new GlideDateTime().toString());
+    out('item sys_id   : ' + ITEM_SYS_ID);
+
+    // ---------------------------------------------------------------- STEP 1
+    hr('STEP 1 - Catalog item / Record Producer');
+    var item = new GlideRecord('sc_cat_item');
+    if (!item.get(ITEM_SYS_ID)) {
+        out('FATAL: item not found on this instance. Wrong environment? Aborting.');
+        return;
+    }
+    out('name        : ' + item.getValue('name'));
+    out('class       : ' + item.getRecordClassName());
+    out('active      : ' + item.getValue('active'));
+    out('sys_scope   : ' + item.getValue('sys_scope'));
+    out('sys_updated : ' + item.getValue('sys_updated_on') + ' by ' + item.getValue('sys_updated_by'));
+
+    // Record Producer server-side script (runs on submit, not on load - context only)
+    var rp = new GlideRecord('sc_cat_item_producer');
+    if (rp.get(ITEM_SYS_ID)) {
+        out('table target: ' + rp.getValue('table_name'));
+        out('-- Record Producer server script --');
+        dumpScript(rp.getValue('script'));
+    }
+
+    // ---------------------------------------------------------------- STEP 2
+    hr('STEP 2 - Variable sets linked to the item');
+    var vsSysIds = [];
+    var vsNameById = {};
+    var link = new GlideRecord('io_set_item');
+    link.addQuery('sc_cat_item', ITEM_SYS_ID);
+    link.query();
+    while (link.next()) {
+        var vsId = link.getValue('variable_set');
+        var vs = new GlideRecord('item_option_new_set');
+        if (vs.get(vsId)) {
+            vsSysIds.push(vsId);
+            vsNameById[vsId] = vs.getValue('internal_name') || vs.getValue('title');
+            out('VS ' + vsId + ' | ' + vsNameById[vsId] + ' | order=' + link.getValue('order'));
+        }
+    }
+    out('total variable sets: ' + vsSysIds.length);
+
+    // ---------------------------------------------------------------- STEP 3
+    hr('STEP 3 - Target phone variables (dictionary + choices + current defaults)');
+    for (var t = 0; t < TARGET_VARS.length; t++) {
+        var v = new GlideRecord('item_option_new');
+        v.addQuery('name', TARGET_VARS[t]);
+        v.query();
+        if (!v.hasNext()) {
+            out('WARN: variable "' + TARGET_VARS[t] + '" NOT FOUND anywhere in item_option_new');
+        }
+        while (v.next()) {
+            var owner = v.getValue('variable_set')
+                ? ('VS:' + (vsNameById[v.getValue('variable_set')] || v.getValue('variable_set')))
+                : ('ITEM:' + v.getValue('cat_item'));
+            out('--- ' + TARGET_VARS[t]);
+            out('    sys_id        : ' + v.getUniqueValue());
+            out('    owner         : ' + owner);
+            out('    type          : ' + v.getValue('type'));
+            out('    active        : ' + v.getValue('active') + ' | mandatory=' + v.getValue('mandatory') + ' | read_only=' + v.getValue('read_only'));
+            out('    default_value : [' + v.getValue('default_value') + ']');
+            out('    dyn default   : ' + v.getValue('dynamic_default_value'));
+            out('    reference     : ' + v.getValue('reference') + ' | qual=' + v.getValue('reference_qual'));
+            out('    order         : ' + v.getValue('order'));
+            out('    updated       : ' + v.getValue('sys_updated_on') + ' by ' + v.getValue('sys_updated_by'));
+
+            var qc = new GlideRecord('question_choice');
+            qc.addQuery('question', v.getUniqueValue());
+            qc.orderBy('order');
+            qc.query();
+            var nchoice = 0;
+            while (qc.next()) {
+                nchoice++;
+                out('      choice: [' + qc.getValue('value') + '] "' + qc.getValue('text') + '" inactive=' + qc.getValue('inactive'));
+            }
+            out('    choices       : ' + nchoice);
+        }
+    }
+
+    // ---------------------------------------------------------------- STEP 4
+    hr('STEP 4 - Catalog client scripts (item + its variable sets) - inventory');
+    var scopeIds = [ITEM_SYS_ID];
+    var csSuspects = [];   // full dump candidates
+    var csAll = 0;
+
+    // a) scripts attached to the item
+    var cs = new GlideRecord('catalog_script_client');
+    cs.addQuery('cat_item', ITEM_SYS_ID);
+    cs.orderBy('name');
+    cs.query();
+    while (cs.next()) {
+        csAll++;
+        inspectCS(cs, 'ITEM');
+    }
+    // b) scripts attached to the variable sets
+    if (vsSysIds.length > 0) {
+        var cs2 = new GlideRecord('catalog_script_client');
+        cs2.addQuery('variable_set', 'IN', vsSysIds.join(','));
+        cs2.orderBy('name');
+        cs2.query();
+        while (cs2.next()) {
+            csAll++;
+            inspectCS(cs2, 'VS:' + (vsNameById[cs2.getValue('variable_set')] || cs2.getValue('variable_set')));
+        }
+    }
+
+    function inspectCS(gr, origin) {
+        var code = gr.getValue('script') || '';
+        var hit = containsAny(code, NEEDLES);
+        var touches = '';
+        for (var k = 0; k < TARGET_VARS.length; k++) {
+            if (code.indexOf(TARGET_VARS[k]) !== -1) touches += TARGET_VARS[k] + ' ';
+        }
+        out((hit || touches ? '>> ' : '   ')
+            + gr.getUniqueValue()
+            + ' | ' + gr.getValue('type')
+            + ' | active=' + gr.getValue('active')
+            + ' | ui_type=' + gr.getValue('ui_type')
+            + ' | ' + origin
+            + ' | ' + gr.getValue('name')
+            + (hit ? ' | NEEDLE_HIT' : '')
+            + (touches ? ' | touches: ' + touches : ''));
+        if (hit || touches) {
+            csSuspects.push({
+                sys_id: gr.getUniqueValue(),
+                name: gr.getValue('name'),
+                type: gr.getValue('type'),
+                active: gr.getValue('active'),
+                origin: origin,
+                cat_variable: gr.getValue('cat_variable'),
+                updated_on: gr.getValue('sys_updated_on'),
+                updated_by: gr.getValue('sys_updated_by'),
+                script: code
+            });
+        }
+    }
+    out('total catalog client scripts in scope: ' + csAll + ' | suspects: ' + csSuspects.length);
+
+    // ---------------------------------------------------------------- STEP 5
+    hr('STEP 5 - FULL SOURCE of suspect catalog client scripts');
+    var ajaxNames = {};
+    for (var s = 0; s < csSuspects.length; s++) {
+        var sc = csSuspects[s];
+        out('');
+        out('--- [' + (s + 1) + '/' + csSuspects.length + '] ' + sc.name);
+        out('    sys_id   : ' + sc.sys_id);
+        out('    type     : ' + sc.type + ' | active=' + sc.active + ' | origin=' + sc.origin);
+        out('    trigger  : ' + sc.cat_variable);
+        out('    updated  : ' + sc.updated_on + ' by ' + sc.updated_by);
+        dumpScript(sc.script);
+        collectAjax(sc.script);
+    }
+
+    function collectAjax(code) {
+        if (!code) return;
+        var re = /new\s+GlideAjax\s*\(\s*['"]([^'"]+)['"]/g;
+        var m;
+        while ((m = re.exec(String(code))) !== null) {
+            ajaxNames[m[1]] = true;
+        }
+    }
+
+    // ---------------------------------------------------------------- STEP 6
+    hr('STEP 6 - Catalog UI policies touching the phone variables');
+    var pol = new GlideRecord('catalog_ui_policy_action');
+    pol.addQuery('variable', 'IN', TARGET_VARS.join(','));
+    pol.query();
+    var npol = 0;
+    while (pol.next()) {
+        npol++;
+        var p = new GlideRecord('catalog_ui_policy');
+        var pname = '(policy not found)';
+        var pactive = '?';
+        var pcond = '';
+        if (p.get(pol.getValue('ui_policy'))) {
+            pname = p.getValue('short_description');
+            pactive = p.getValue('active');
+            pcond = p.getValue('catalog_conditions');
+        }
+        out('action ' + pol.getUniqueValue()
+            + ' | var=' + pol.getValue('variable')
+            + ' | visible=' + pol.getValue('visible')
+            + ' | mandatory=' + pol.getValue('mandatory')
+            + ' | disabled=' + pol.getValue('disabled')
+            + ' || policy=' + pol.getValue('ui_policy') + ' active=' + pactive + ' "' + pname + '" cond=[' + pcond + ']');
+    }
+    out('total UI policy actions on phone vars: ' + npol);
+
+    // ---------------------------------------------------------------- STEP 7
+    hr('STEP 7 - FULL SOURCE of Script Includes called via GlideAjax by the suspects');
+    var siList = [];
+    for (var n in ajaxNames) {
+        if (ajaxNames.hasOwnProperty(n)) siList.push(n);
+    }
+    out('GlideAjax targets referenced: ' + (siList.length ? siList.join(', ') : '(none)'));
+    for (var si = 0; si < siList.length; si++) {
+        var shortName = siList[si];
+        var dot = shortName.lastIndexOf('.');
+        if (dot !== -1) shortName = shortName.substring(dot + 1); // strip scope prefix
+
+        var inc = new GlideRecord('sys_script_include');
+        inc.addQuery('name', shortName);
+        inc.query();
+        if (!inc.hasNext()) {
+            out('WARN: Script Include "' + siList[si] + '" not found (name=' + shortName + ')');
+        }
+        while (inc.next()) {
+            out('');
+            out('--- Script Include: ' + inc.getValue('name'));
+            out('    sys_id      : ' + inc.getUniqueValue());
+            out('    active      : ' + inc.getValue('active') + ' | client_callable=' + inc.getValue('client_callable'));
+            out('    api_name    : ' + inc.getValue('api_name'));
+            out('    updated     : ' + inc.getValue('sys_updated_on') + ' by ' + inc.getValue('sys_updated_by'));
+            dumpScript(inc.getValue('script'));
+        }
+    }
+
+    // ---------------------------------------------------------------- STEP 8
+    hr('STEP 8 - INSTANCE-WIDE scan for the needle "Valeur actuelle"');
+    out('Purpose: the message + the technical variable name shown next to each label is NOT OOTB.');
+    out('It most likely comes from a debug widget / global client script. Find it.');
+
+    scanTable('catalog_script_client', ['script'], 'Valeur actuelle');
+    scanTable('sys_script_client', ['script'], 'Valeur actuelle');
+    scanTable('sys_script_include', ['script'], 'Valeur actuelle');
+    scanTable('sys_ui_script', ['script'], 'Valeur actuelle');
+    scanTable('catalog_ui_policy', ['script_true', 'script_false'], 'Valeur actuelle');
+    scanTable('sp_widget', ['client_script', 'template', 'script', 'link'], 'Valeur actuelle');
+    scanTable('sys_script', ['script'], 'Valeur actuelle');
+
+    function scanTable(table, fields, needle) {
+        try {
+            var parts = [];
+            for (var f = 0; f < fields.length; f++) {
+                parts.push(fields[f] + 'LIKE' + needle);
+            }
+            var gr = new GlideRecord(table);
+            if (!gr.isValid()) {
+                out('[' + table + '] table not valid on this instance - skipped');
+                return;
+            }
+            gr.addEncodedQuery(parts.join('^OR'));
+            gr.setLimit(25);
+            gr.query();
+            var count = 0;
+            while (gr.next()) {
+                count++;
+                out('[' + table + '] HIT ' + gr.getUniqueValue()
+                    + ' | ' + (gr.getValue('name') || gr.getValue('id') || gr.getValue('short_description') || '(no name)')
+                    + ' | active=' + gr.getValue('active')
+                    + ' | updated=' + gr.getValue('sys_updated_on') + ' by ' + gr.getValue('sys_updated_by'));
+                for (var d = 0; d < fields.length; d++) {
+                    var code = gr.getValue(fields[d]);
+                    if (code && String(code).indexOf(needle) !== -1) {
+                        out('    >>> field "' + fields[d] + '" contains the needle - FULL SOURCE:');
+                        dumpScript(code);
+                    }
+                }
+            }
+            out('[' + table + '] hits: ' + count);
+        } catch (e) {
+            out('[' + table + '] scan failed: ' + e.message);
+        }
+    }
+
+    hr('DONE');
+    out('Next: read STEP 8 first (who prints the message), then STEP 5 (how the value is read).');
+
+})();
